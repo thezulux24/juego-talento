@@ -109,6 +109,7 @@ export const App: React.FC = () => {
   const [overlay, setOverlay] = useState<OverlayState>('START_MENU');
   const [previousOverlay, setPreviousOverlay] = useState<OverlayState>('START_MENU');
   const [activeCaseIndex, setActiveCaseIndex] = useState<number>(0);
+  const [resetVersion, setResetVersion] = useState<number>(0);
   const [caseResults, setCaseResults] = useState<Record<string, CaseResultSummary>>({});
   const [hasSavedGame, setHasSavedGame] = useState<boolean>(false);
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
@@ -233,6 +234,7 @@ export const App: React.FC = () => {
     soundEngine.playDoorOpen();
     setCaseResults({});
     setActiveCaseIndex(0);
+    setResetVersion((v) => v + 1);
     saveProgress(0, {});
     setOverlay('PLAYING');
     maybeStartTutorial();
@@ -251,6 +253,7 @@ export const App: React.FC = () => {
     soundEngine.playButtonClick();
     soundEngine.playDoorOpen();
     setActiveCaseIndex(index);
+    setResetVersion((v) => v + 1);
     saveProgress(index, caseResults);
     setOverlay('PLAYING');
     maybeStartTutorial();
@@ -315,6 +318,7 @@ export const App: React.FC = () => {
     localStorage.removeItem(SAVE_STORAGE_KEY);
     setCaseResults({});
     setActiveCaseIndex(0);
+    setResetVersion((v) => v + 1);
     setHasSavedGame(false);
   };
 
@@ -403,6 +407,7 @@ export const App: React.FC = () => {
       {/* FULLSCREEN 3D FIRST-PERSON OFFICE WORLD (ALWAYS LIVE IN BACKGROUND!) */}
       <Office3DGame
         vacancy={currentVacancy}
+        resetVersion={resetVersion}
         settings={settings}
         isMenuOpen={overlay !== 'PLAYING'}
         onOpenManual={() => handleOpenModalFrom('GUIDE')}
@@ -443,6 +448,14 @@ export const App: React.FC = () => {
                 className="pause-btn primary"
               >
                 <Play size={17} /> Continuar <kbd>Esc</kbd>
+              </button>
+              <button
+                type="button"
+                onMouseEnter={() => soundEngine.playHoverTick()}
+                onClick={() => handleStartCase(activeCaseIndex)}
+                className="pause-btn"
+              >
+                <RotateCcw size={17} /> Reiniciar misión actual
               </button>
               <button
                 type="button"

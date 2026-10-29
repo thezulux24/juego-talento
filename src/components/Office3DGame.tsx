@@ -84,6 +84,7 @@ interface AskedRecord {
 
 interface Office3DGameProps {
   vacancy: VacancyCase;
+  resetVersion?: number;
   settings: GameSettings;
   isMenuOpen: boolean;
   onOpenManual: () => void;
@@ -103,6 +104,7 @@ interface Office3DGameProps {
 
 export const Office3DGame: React.FC<Office3DGameProps> = ({
   vacancy,
+  resetVersion = 0,
   settings,
   isMenuOpen,
   onOpenManual: onOpenManualProp,
@@ -178,7 +180,7 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
     '¡Quiubo! Mueve la cámara arrastrando, toma la Lupa [L], abre el Libro en mesa [M], llama al Citófono [T] o interroga al candidato.'
   );
 
-  // Reset state when vacancy changes
+  // Reset state when vacancy changes or a reset is requested
   useEffect(() => {
     setActiveCandIdx(0);
     setHeldTool('NONE');
@@ -196,12 +198,21 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
       [vacancy.candidates[1].id]: [],
       [vacancy.candidates[2].id]: []
     });
+    lastTypedSpeechRef.current = null;
     setSpeechText(vacancy.candidates[0].greeting);
     setCandidateMood('neutral');
     setLastAskedQuestionId(null);
     setActiveFollowUp(null);
     setLiveSignalToast(null);
-  }, [vacancy]);
+    setGameToast(
+      '¡Quiubo! Mueve la cámara arrastrando, toma la Lupa [L], abre el Libro en mesa [M], llama al Citófono [T] o interroga al candidato.'
+    );
+    threeRefs.current.targetYaw = 0;
+    threeRefs.current.targetPitch = -0.16;
+    threeRefs.current.targetFov = 50;
+    threeRefs.current.candWalkProgress = 0;
+    threeRefs.current.doorAngle = 1.2;
+  }, [vacancy, resetVersion]);
 
   // Typewriter effect honoring settings.textSpeed. The visible text is written straight
   // into the dialogue <span> so typing does not re-render the whole game every tick.
