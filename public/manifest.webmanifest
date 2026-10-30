@@ -1,0 +1,10 @@
+{
+  "name": "JaveTalento — Selección por competencias",
+  "short_name": "JaveTalento",
+  "description": "Simulador 3D de reclutamiento y selección por competencias de la Pontificia Universidad Javeriana Cali",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#140C07",
+  "theme_color": "#0B2545"
+}

@@ -63,7 +63,9 @@ import {
   Flag,
   HelpCircle,
   Radio,
-  BookOpen
+  BookOpen,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 
 export type HeldTool =
@@ -87,6 +89,8 @@ interface Office3DGameProps {
   resetVersion?: number;
   settings: GameSettings;
   isMenuOpen: boolean;
+  isMobileHud?: boolean;
+  isForcedLandscape?: boolean;
   onOpenManual: () => void;
   onPause: () => void;
   onCompleteCase: (
@@ -107,6 +111,8 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
   resetVersion = 0,
   settings,
   isMenuOpen,
+  isMobileHud = false,
+  isForcedLandscape = false,
   onOpenManual: onOpenManualProp,
   onPause,
   onCompleteCase
@@ -179,6 +185,23 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
   const [gameToast, setGameToast] = useState<string>(
     '¡Quiubo! Mueve la cámara arrastrando, toma la Lupa [L], abre el Libro en mesa [M], llama al Citófono [T] o interroga al candidato.'
   );
+  const [isObjectivesOpen, setIsObjectivesOpen] = useState<boolean>(false);
+  const [isDialogueMinimized, setIsDialogueMinimized] = useState<boolean>(false);
+  const [showMobileToast, setShowMobileToast] = useState<boolean>(false);
+  const initialToastRef = useRef<string>(gameToast);
+
+  // Auto-expand dialogue when candidate says something new
+  useEffect(() => {
+    setIsDialogueMinimized(false);
+  }, [speechText, activeCandIdx]);
+
+  // Show floating toast on mobile whenever gameToast changes after initial greeting
+  useEffect(() => {
+    if (gameToast === initialToastRef.current) return;
+    setShowMobileToast(true);
+    const timer = window.setTimeout(() => setShowMobileToast(false), 4500);
+    return () => window.clearTimeout(timer);
+  }, [gameToast]);
 
   // Reset state when vacancy changes or a reset is requested
   useEffect(() => {
@@ -443,6 +466,7 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
     calledReferences,
     lupaUsedEver,
     isMenuOpen,
+    isForcedLandscape,
     cameraSensitivity: settings.cameraSensitivity
   });
   useEffect(() => {
@@ -458,6 +482,7 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
       calledReferences,
       lupaUsedEver,
       isMenuOpen,
+      isForcedLandscape,
       cameraSensitivity: settings.cameraSensitivity
     };
   }, [
@@ -472,6 +497,7 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
     calledReferences,
     lupaUsedEver,
     isMenuOpen,
+    isForcedLandscape,
     settings.cameraSensitivity
   ]);
 
@@ -656,7 +682,7 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
       setLiveSignalToast(null);
       setGameToast(`¡Adelante! ${nextCand.name} entra por la puerta y toma asiento frente a ti.`);
       threeRefs.current.targetYaw = 0;
-      threeRefs.current.targetPitch = -0.06;
+      threeRefs.current.targetPitch = -0.16;
     },
     [vacancy.candidates]
   );
@@ -1469,11 +1495,31 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
     let prevX = 0;
     let prevY = 0;
 
+    const toGameCoords = (clientX: number, clientY: number) => {
+      if (stateRef.current.isForcedLandscape) {
+        const physW = window.innerWidth || 1;
+        const physH = window.innerHeight || 1;
+        return {
+          x: clientY,
+          y: physW - clientX,
+          width: physH,
+          height: physW
+        };
+      }
+      const rect = renderer.domElement.getBoundingClientRect();
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+        width: rect.width || container.clientWidth || 1,
+        height: rect.height || container.clientHeight || 1
+      };
+    };
+
     const updatePointerAndRay = (clientX: number, clientY: number) => {
       if (stateRef.current.isMenuOpen) return;
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      const pt = toGameCoords(clientX, clientY);
+      pointer.x = (pt.x / pt.width) * 2 - 1;
+      pointer.y = -(pt.y / pt.height) * 2 + 1;
 
       raycaster.setFromCamera(pointer, camera);
       raycaster.ray.intersectPlane(deskPlane, threeRefs.current.mouseWorldOnDesk);
@@ -1505,21 +1551,24 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
       if (stateRef.current.isMenuOpen) return;
       isDraggingLook = true;
       dragDistance = 0;
-      prevX = e.clientX;
-      prevY = e.clientY;
+      const pt = toGameCoords(e.clientX, e.clientY);
+      prevX = pt.x;
+      prevY = pt.y;
       updatePointerAndRay(e.clientX, e.clientY);
     };
 
     const onPointerMove = (e: PointerEvent) => {
       if (stateRef.current.isMenuOpen) return;
       if (isDraggingLook) {
-        const dx = e.clientX - prevX;
-        const dy = e.clientY - prevY;
+        const pt = toGameCoords(e.clientX, e.clientY);
+        const dx = pt.x - prevX;
+        const dy = pt.y - prevY;
         dragDistance += Math.abs(dx) + Math.abs(dy);
-        prevX = e.clientX;
-        prevY = e.clientY;
+        prevX = pt.x;
+        prevY = pt.y;
 
-        const sens = 0.0038 * (stateRef.current.cameraSensitivity || 1.0);
+        const touchBoost = e.pointerType === 'touch' ? 1.35 : 1.0;
+        const sens = 0.0038 * (stateRef.current.cameraSensitivity || 1.0) * touchBoost;
         threeRefs.current.targetYaw = Math.max(
           -0.72,
           Math.min(0.72, threeRefs.current.targetYaw - dx * sens)
@@ -1533,8 +1582,13 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      if (stateRef.current.isMenuOpen) return;
-      const wasClick = dragDistance < 10;
+      if (!isDraggingLook) return;
+      if (stateRef.current.isMenuOpen) {
+        isDraggingLook = false;
+        return;
+      }
+      const tapThreshold = e.pointerType === 'touch' ? 16 : 10;
+      const wasClick = dragDistance < tapThreshold;
       isDraggingLook = false;
       updatePointerAndRay(e.clientX, e.clientY);
 
@@ -1688,19 +1742,31 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
       }
     };
 
+    const onPointerCancel = () => {
+      isDraggingLook = false;
+    };
+
     const domEl = renderer.domElement;
     domEl.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
     window.addEventListener('keydown', onKeyDown);
 
     const onResize = () => {
       if (!container) return;
-      camera.aspect = container.clientWidth / container.clientHeight;
+      const w = container.clientWidth || 1;
+      const h = container.clientHeight || 1;
+      camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setSize(w, h);
     };
     window.addEventListener('resize', onResize);
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(onResize);
+      resizeObserver.observe(container);
+    }
 
     // --- STATIC SCENERY: compute matrices once instead of every frame ---
     const dynamicRoots = new Set<THREE.Object3D>([
@@ -1865,8 +1931,10 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
       domEl.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', onResize);
+      resizeObserver?.disconnect();
       renderer.dispose();
     };
   }, [
@@ -1966,7 +2034,7 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
 
     setHeldTool('NONE');
     threeRefs.current.targetYaw = 0;
-    threeRefs.current.targetPitch = -0.04;
+    threeRefs.current.targetPitch = -0.16;
   };
 
   const handlePressFollowUp = () => {
@@ -2051,6 +2119,11 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
   const reviewedCount = Object.keys(cvAnnotations).length;
   const totalHighlights = vacancy.candidates.reduce((n, c) => n + c.cvHighlights.length, 0);
   const activeStamp = stampedByCand[activeCandidate.id];
+  const doneObjectivesCount =
+    (validProfilePinned >= vacancy.requiredCorrectCount ? 1 : 0) +
+    (reviewedCount >= totalHighlights ? 1 : 0) +
+    (currentHistory.length >= 3 ? 1 : 0) +
+    (calledReferences[activeCandidate.id] ? 1 : 0);
 
   const moodLabel: Record<CandidateMood, string> = {
     enthusiastic: 'Entusiasta',
@@ -2066,8 +2139,21 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
       <div ref={mountRef} className="game3d-canvas-mount" />
       <div className="hud-vignette" aria-hidden="true" />
 
+      {/* FLOATING TOAST ON MOBILE WHEN OBJECTIVES PANEL IS COLLAPSED */}
+      {!isMenuOpen && isMobileHud && showMobileToast && !isObjectivesOpen && heldTool === 'NONE' && (
+        <div
+          className="hud-mobile-toast"
+          role="status"
+          onClick={() => setShowMobileToast(false)}
+        >
+          <IconLupa size={14} />
+          <span>{gameToast}</span>
+          <X size={13} />
+        </div>
+      )}
+
       {/* CONTEXT PROMPT WHEN HOVERING A 3D OBJECT */}
-      {!isMenuOpen && hoveredInteractable && heldTool === 'NONE' && (
+      {!isMenuOpen && !isMobileHud && hoveredInteractable && heldTool === 'NONE' && (
         <div className="hud-prompt">
           <span className="hud-prompt-icon">
             <Hand size={15} />
@@ -2181,7 +2267,10 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
 
       {/* CANDIDATE DIALOGUE BOX */}
       {!isMenuOpen && heldTool === 'NONE' && (
-        <section className="hud-dialogue" aria-live="polite">
+        <section
+          className={`hud-dialogue ${isDialogueMinimized ? 'is-minimized' : ''}`}
+          aria-live="polite"
+        >
           <div className="dialogue-nameplate">
             <img src={activeCandidate.portraitUrl} alt="" className="dialogue-portrait" />
             <div className="dialogue-who">
@@ -2200,58 +2289,71 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
               )}
               {moodLabel[candidateMood]}
             </span>
+            <button
+              type="button"
+              onClick={() => setIsDialogueMinimized((m) => !m)}
+              className="btn-dialogue-toggle"
+              title={isDialogueMinimized ? 'Mostrar diálogo' : 'Minimizar diálogo'}
+            >
+              {isDialogueMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              <span>{isDialogueMinimized ? 'Ver texto' : 'Ocultar'}</span>
+            </button>
           </div>
 
-          <p
-            className="dialogue-text"
-            onClick={() => {
-              if (isSpeaking) skipTyping();
-            }}
-          >
-            <span ref={attachSpeechSpan} />
-            {isSpeaking ? (
-              <span className="dialogue-cursor" />
-            ) : (
-              <span className="dialogue-done" aria-hidden="true">
-                ◆
-              </span>
-            )}
-          </p>
+          {!isDialogueMinimized && (
+            <>
+              <p
+                className="dialogue-text"
+                onClick={() => {
+                  if (isSpeaking) skipTyping();
+                }}
+              >
+                <span ref={attachSpeechSpan} />
+                {isSpeaking ? (
+                  <span className="dialogue-cursor" />
+                ) : (
+                  <span className="dialogue-done" aria-hidden="true">
+                    ◆
+                  </span>
+                )}
+              </p>
 
-          {liveSignalToast && (
-            <div className={`dialogue-signal sig-${liveSignalToast.type}`}>
-              <span className="sig-icon">
-                {liveSignalToast.type === 'acierto_fuerte' && <Sparkles size={14} />}
-                {liveSignalToast.type === 'alerta_riesgo' && <AlertTriangle size={14} />}
-                {liveSignalToast.type === 'respuesta_ambigua' && <HelpCircle size={14} />}
-              </span>
-              <span className="sig-text">
-                <strong>{liveSignalToast.summary}</strong>
-                <em>{liveSignalToast.valueHighlighted}</em>
-              </span>
-              {lastAskedQuestionId && (
-                <span className="sig-flags">
-                  <button
-                    type="button"
-                    onMouseEnter={() => soundEngine.playHoverTick()}
-                    onClick={() => handleFlagLastAnswer('acierto')}
-                    className="btn-chip good"
-                    title="Anotar como acierto"
-                  >
-                    <ThumbsUp size={12} /> Acierto
-                  </button>
-                  <button
-                    type="button"
-                    onMouseEnter={() => soundEngine.playHoverTick()}
-                    onClick={() => handleFlagLastAnswer('alerta')}
-                    className="btn-chip bad"
-                    title="Anotar como alerta"
-                  >
-                    <Flag size={12} /> Alerta
-                  </button>
-                </span>
+              {liveSignalToast && (
+                <div className={`dialogue-signal sig-${liveSignalToast.type}`}>
+                  <span className="sig-icon">
+                    {liveSignalToast.type === 'acierto_fuerte' && <Sparkles size={14} />}
+                    {liveSignalToast.type === 'alerta_riesgo' && <AlertTriangle size={14} />}
+                    {liveSignalToast.type === 'respuesta_ambigua' && <HelpCircle size={14} />}
+                  </span>
+                  <span className="sig-text">
+                    <strong>{liveSignalToast.summary}</strong>
+                    <em>{liveSignalToast.valueHighlighted}</em>
+                  </span>
+                  {lastAskedQuestionId && (
+                    <span className="sig-flags">
+                      <button
+                        type="button"
+                        onMouseEnter={() => soundEngine.playHoverTick()}
+                        onClick={() => handleFlagLastAnswer('acierto')}
+                        className="btn-chip good"
+                        title="Anotar como acierto"
+                      >
+                        <ThumbsUp size={12} /> Acierto
+                      </button>
+                      <button
+                        type="button"
+                        onMouseEnter={() => soundEngine.playHoverTick()}
+                        onClick={() => handleFlagLastAnswer('alerta')}
+                        className="btn-chip bad"
+                        title="Anotar como alerta"
+                      >
+                        <Flag size={12} /> Alerta
+                      </button>
+                    </span>
+                  )}
+                </div>
               )}
-            </div>
+            </>
           )}
 
           <div className="dialogue-actions">
@@ -2290,11 +2392,13 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
 
       {/* OBJECTIVES TRACKER */}
       {!isMenuOpen && (
-        <aside className="hud-objectives">
-          <header className="obj-head">
-            <span className="hud-eyebrow">Caso {vacancy.number} · Oficina del Samán</span>
-            <h2>{vacancy.title}</h2>
-          </header>
+        <aside className={`hud-objectives ${isObjectivesOpen ? 'is-open' : ''}`}>
+          {!isMobileHud && (
+            <header className="obj-head">
+              <span className="hud-eyebrow">Caso {vacancy.number} · Oficina del Samán</span>
+              <h2>{vacancy.title}</h2>
+            </header>
+          )}
 
           <div className="obj-candidates" role="group" aria-label="Candidatos">
             {vacancy.candidates.map((cand, idx) => {
@@ -2321,99 +2425,134 @@ export const Office3DGame: React.FC<Office3DGameProps> = ({
               <span>Candidato {activeCandIdx + 1} de {vacancy.candidates.length}</span>
               <strong>{activeCandidate.name}</strong>
             </div>
+            {isMobileHud && (
+              <button
+                type="button"
+                onClick={() => setIsObjectivesOpen((o) => !o)}
+                className="obj-mobile-toggle"
+                aria-expanded={isObjectivesOpen}
+                title="Ver objetivos y progreso"
+              >
+                <span>{doneObjectivesCount}/4</span>
+                {isObjectivesOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            )}
           </div>
 
-          <div className="obj-meters">
-            <div className="obj-meter">
-              <span>Competencia técnica</span>
-              <strong>{activeMetrics.tech}%</strong>
-              <div className="meter-track">
-                <div className="meter-fill tech" style={{ width: `${activeMetrics.tech}%` }} />
-              </div>
-            </div>
-            <div className="obj-meter">
-              <span>Afinidad javeriana</span>
-              <strong>{activeMetrics.culture}%</strong>
-              <div className="meter-track">
-                <div className="meter-fill cult" style={{ width: `${activeMetrics.culture}%` }} />
-              </div>
-            </div>
-          </div>
+          {(!isMobileHud || isObjectivesOpen) && (
+            <div className="obj-collapsible-body">
+              {isMobileHud && (
+                <header className="obj-head">
+                  <span className="hud-eyebrow">Caso {vacancy.number}</span>
+                  <h2>{vacancy.title}</h2>
+                </header>
+              )}
 
-          <ul className="obj-list">
-            <li>
-              <button
-                type="button"
-                onMouseEnter={() => soundEngine.playHoverTick()}
-                onClick={toggleClipboard}
-                className={`obj-item ${
-                  validProfilePinned >= vacancy.requiredCorrectCount ? 'is-done' : ''
-                }`}
-              >
-                <span className="obj-check" />
-                <span className="obj-label">Definir perfil del cargo</span>
-                <span className="obj-count">
-                  {validProfilePinned}/{vacancy.requiredCorrectCount}
-                </span>
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                onMouseEnter={() => soundEngine.playHoverTick()}
-                onClick={toggleCvFolder}
-                className={`obj-item ${reviewedCount >= totalHighlights ? 'is-done' : ''}`}
-              >
-                <span className="obj-check" />
-                <span className="obj-label">Revisar hojas de vida</span>
-                <span className="obj-count">
-                  {reviewedCount}/{totalHighlights}
-                </span>
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                onMouseEnter={() => soundEngine.playHoverTick()}
-                onClick={toggleNotebook}
-                className={`obj-item ${currentHistory.length >= 3 ? 'is-done' : ''}`}
-              >
-                <span className="obj-check" />
-                <span className="obj-label">Entrevistar (STAR)</span>
-                <span className="obj-count">{currentHistory.length}/5</span>
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                onMouseEnter={() => soundEngine.playHoverTick()}
-                onClick={triggerPhoneReferenceCall}
-                className={`obj-item ${calledReferences[activeCandidate.id] ? 'is-done' : ''}`}
-              >
-                <span className="obj-check" />
-                <span className="obj-label">Verificar referencia</span>
-                <span className="obj-count">
-                  {calledReferences[activeCandidate.id] ? 'Hecho' : 'Llamar'}
-                </span>
-              </button>
-            </li>
-          </ul>
+              <div className="obj-meters">
+                <div className="obj-meter">
+                  <span>Competencia técnica</span>
+                  <strong>{activeMetrics.tech}%</strong>
+                  <div className="meter-track">
+                    <div className="meter-fill tech" style={{ width: `${activeMetrics.tech}%` }} />
+                  </div>
+                </div>
+                <div className="obj-meter">
+                  <span>Afinidad javeriana</span>
+                  <strong>{activeMetrics.culture}%</strong>
+                  <div className="meter-track">
+                    <div className="meter-fill cult" style={{ width: `${activeMetrics.culture}%` }} />
+                  </div>
+                </div>
+              </div>
 
-          {candClues.length > 0 && (
-            <div className="obj-clues">
-              <span className="hud-eyebrow">Pistas de la lupa</span>
-              {candClues.map((c, idx) => (
-                <p key={idx} className="clue-chip">
-                  <IconLupa size={12} /> <span>{c}</span>
+              <ul className="obj-list">
+                <li>
+                  <button
+                    type="button"
+                    onMouseEnter={() => soundEngine.playHoverTick()}
+                    onClick={() => {
+                      setIsObjectivesOpen(false);
+                      toggleClipboard();
+                    }}
+                    className={`obj-item ${
+                      validProfilePinned >= vacancy.requiredCorrectCount ? 'is-done' : ''
+                    }`}
+                  >
+                    <span className="obj-check" />
+                    <span className="obj-label">Definir perfil del cargo</span>
+                    <span className="obj-count">
+                      {validProfilePinned}/{vacancy.requiredCorrectCount}
+                    </span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onMouseEnter={() => soundEngine.playHoverTick()}
+                    onClick={() => {
+                      setIsObjectivesOpen(false);
+                      toggleCvFolder();
+                    }}
+                    className={`obj-item ${reviewedCount >= totalHighlights ? 'is-done' : ''}`}
+                  >
+                    <span className="obj-check" />
+                    <span className="obj-label">Revisar hojas de vida</span>
+                    <span className="obj-count">
+                      {reviewedCount}/{totalHighlights}
+                    </span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onMouseEnter={() => soundEngine.playHoverTick()}
+                    onClick={() => {
+                      setIsObjectivesOpen(false);
+                      toggleNotebook();
+                    }}
+                    className={`obj-item ${currentHistory.length >= 3 ? 'is-done' : ''}`}
+                  >
+                    <span className="obj-check" />
+                    <span className="obj-label">Entrevistar (STAR)</span>
+                    <span className="obj-count">{currentHistory.length}/5</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onMouseEnter={() => soundEngine.playHoverTick()}
+                    onClick={() => {
+                      setIsObjectivesOpen(false);
+                      triggerPhoneReferenceCall();
+                    }}
+                    className={`obj-item ${calledReferences[activeCandidate.id] ? 'is-done' : ''}`}
+                  >
+                    <span className="obj-check" />
+                    <span className="obj-label">Verificar referencia</span>
+                    <span className="obj-count">
+                      {calledReferences[activeCandidate.id] ? 'Hecho' : 'Llamar'}
+                    </span>
+                  </button>
+                </li>
+              </ul>
+
+              {candClues.length > 0 && (
+                <div className="obj-clues">
+                  <span className="hud-eyebrow">Pistas de la lupa</span>
+                  {candClues.map((c, idx) => (
+                    <p key={idx} className="clue-chip">
+                      <IconLupa size={12} /> <span>{c}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {!candClues.includes(gameToast) && (
+                <p className="obj-hint" key={gameToast}>
+                  {gameToast}
                 </p>
-              ))}
+              )}
             </div>
-          )}
-
-          {!candClues.includes(gameToast) && (
-            <p className="obj-hint" key={gameToast}>
-              {gameToast}
-            </p>
           )}
         </aside>
       )}

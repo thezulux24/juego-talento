@@ -16,12 +16,12 @@ const STEPS: TutorialStep[] = [
   {
     target: '.hud-dialogue',
     title: 'El candidato te habla',
-    text: 'Aquí lees lo que dice. Haz clic sobre el texto para verlo completo. Con «Siguiente» haces pasar al próximo candidato.'
+    text: 'Aquí lees lo que dice. Toca el texto para verlo completo o usa el botón de minimizar para despejar la vista. Con «Siguiente» haces pasar al próximo candidato.'
   },
   {
     target: '.hud-hotbar',
     title: 'Tus herramientas',
-    text: 'Cada objeto del escritorio está en esta barra. También puedes hacer clic directamente sobre el objeto en la oficina o usar su tecla.'
+    text: 'Cada objeto del escritorio está en esta barra inferior. También puedes tocar directamente el objeto en la oficina 3D.'
   },
   {
     target: '.hotbar-slot[aria-label="Perfil"]',
@@ -45,8 +45,8 @@ const STEPS: TutorialStep[] = [
   },
   {
     target: '.hud-objectives',
-    title: 'Tu progreso',
-    text: 'Aquí ves los objetivos, cómo va cada candidato y las pistas que encuentres. Toca una foto para llamar a ese candidato.'
+    title: 'Tu progreso y candidatos',
+    text: 'Aquí cambias de candidato tocando su foto y consultas tus objetivos y las pistas descubiertas.'
   },
   {
     target: '.hotbar-slot[aria-label="Contratar"]',
@@ -55,21 +55,37 @@ const STEPS: TutorialStep[] = [
   },
   {
     target: '.btn-hud-pause',
-    title: 'Pausa y ayuda',
-    text: 'Con Esc pausas el juego. Desde ahí abres el manual o repites este tutorial cuando quieras. ¡Éxitos!'
+    title: 'Pausa y pantalla completa',
+    text: 'Arriba a la izquierda pausas el juego o activas la pantalla completa cuando quieras. ¡Éxitos!'
   }
 ];
 
 const CARD_WIDTH = 360;
-const GAP = 16;
+const MOBILE_CARD_WIDTH = 300;
+const GAP = 12;
+
+interface LogicalRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
 
 interface TutorialOverlayProps {
   onFinish: () => void;
+  isForcedLandscape?: boolean;
+  isMobileHud?: boolean;
 }
 
-export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ onFinish }) => {
+export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
+  onFinish,
+  isForcedLandscape = false,
+  isMobileHud = false
+}) => {
   const [stepIndex, setStepIndex] = useState(0);
-  const [rect, setRect] = useState<DOMRect | null>(null);
+  const [rect, setRect] = useState<LogicalRect | null>(null);
   const step = STEPS[stepIndex];
   const isLast = stepIndex === STEPS.length - 1;
 
@@ -79,8 +95,36 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ onFinish }) =>
       return;
     }
     const el = document.querySelector(step.target);
-    setRect(el ? el.getBoundingClientRect() : null);
-  }, [step.target]);
+    if (!el) {
+      setRect(null);
+      return;
+    }
+    const raw = el.getBoundingClientRect();
+    if (raw.width === 0 && raw.height === 0) {
+      setRect(null);
+      return;
+    }
+    if (isForcedLandscape) {
+      const physW = window.innerWidth;
+      setRect({
+        left: raw.top,
+        top: physW - raw.right,
+        right: raw.bottom,
+        bottom: physW - raw.left,
+        width: raw.height,
+        height: raw.width
+      });
+    } else {
+      setRect({
+        left: raw.left,
+        top: raw.top,
+        right: raw.right,
+        bottom: raw.bottom,
+        width: raw.width,
+        height: raw.height
+      });
+    }
+  }, [step.target, isForcedLandscape]);
 
   // Measure now and again once HUD entrance animations have settled
   useLayoutEffect(() => {
@@ -129,25 +173,32 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ onFinish }) =>
     return () => window.removeEventListener('keydown', onKey, true);
   }, [next, back, skip]);
 
-  // Place the card next to the spotlight, inside the viewport
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const cardWidth = Math.min(CARD_WIDTH, vw - 24);
+  // Place the card next to the spotlight, inside the logical game viewport
+  const vw = isForcedLandscape ? window.innerHeight : window.innerWidth;
+  const vh = isForcedLandscape ? window.innerWidth : window.innerHeight;
+  const maxCardW = isMobileHud ? MOBILE_CARD_WIDTH : CARD_WIDTH;
+  const cardWidth = Math.min(maxCardW, vw - 20);
+  const estCardHeight = isMobileHud ? 168 : 210;
+
   let cardStyle: React.CSSProperties;
   if (rect) {
     const left = Math.min(
-      Math.max(12, rect.left + rect.width / 2 - cardWidth / 2),
-      vw - cardWidth - 12
+      Math.max(10, rect.left + rect.width / 2 - cardWidth / 2),
+      vw - cardWidth - 10
     );
     const placeBelow = rect.top + rect.height / 2 < vh / 2;
-    cardStyle = placeBelow
-      ? { left, top: Math.min(rect.bottom + GAP, vh - 220), width: cardWidth }
-      : { left, bottom: Math.max(12, vh - rect.top + GAP), width: cardWidth };
+    if (placeBelow) {
+      const top = Math.max(8, Math.min(rect.bottom + GAP, vh - estCardHeight - 8));
+      cardStyle = { left, top, width: cardWidth };
+    } else {
+      const bottom = Math.max(8, Math.min(vh - rect.top + GAP, vh - estCardHeight - 8));
+      cardStyle = { left, bottom, width: cardWidth };
+    }
   } else {
     cardStyle = { left: '50%', top: '50%', width: cardWidth, transform: 'translate(-50%, -50%)' };
   }
 
-  const pad = 8;
+  const pad = isMobileHud ? 5 : 8;
 
   return (
     <div className="tutorial-root" role="dialog" aria-modal="true" aria-label="Tutorial">
@@ -179,7 +230,7 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({ onFinish }) =>
         <div className="tutorial-actions">
           {!isLast && (
             <button type="button" onClick={skip} className="tutorial-skip">
-              Saltar tutorial
+              Saltar
             </button>
           )}
           {stepIndex > 0 && (

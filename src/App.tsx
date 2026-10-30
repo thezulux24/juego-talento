@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { CaseResultSummary, GameSettings } from './types/game';
 import { VACANCY_CASES, MENTOR_INFO } from './data/vacancies';
 import { soundEngine } from './audio/SoundEngine';
@@ -13,7 +13,6 @@ import {
   IconLupa,
   IconPhone,
   IconStamp,
-  IconStarBadge,
   IconCheckSeal,
   IconStampReject,
   IconNotebook,
@@ -29,6 +28,7 @@ import {
   RotateCcw,
   Settings,
   Maximize2,
+  Minimize2,
   Trash2,
   X,
   Eye,
@@ -105,6 +105,37 @@ const STAR_STEPS: [string, string, string][] = [
   ['R', 'Resultado', 'Qué logró, idealmente con datos.']
 ];
 
+interface ViewportInfo {
+  physW: number;
+  physH: number;
+  gameW: number;
+  gameH: number;
+  isMobile: boolean;
+  isForcedLandscape: boolean;
+  isMobileHud: boolean;
+}
+
+const computeViewportInfo = (): ViewportInfo => {
+  const physW = window.innerWidth || 1024;
+  const physH = window.innerHeight || 768;
+  const shortSide = Math.min(physW, physH);
+  const isTouch =
+    typeof window !== 'undefined' &&
+    (window.matchMedia?.('(pointer: coarse)').matches ||
+      navigator.maxTouchPoints > 0 ||
+      'ontouchstart' in window);
+
+  const isMobile = shortSide <= 560 || (isTouch && shortSide <= 840);
+  // Whenever opened on mobile (or a portrait screen <= 768px wide) in portrait orientation,
+  // automatically rotate into landscape so the game is always horizontal!
+  const isForcedLandscape = physW < physH && (isMobile || physW <= 768);
+  const gameW = isForcedLandscape ? physH : physW;
+  const gameH = isForcedLandscape ? physW : physH;
+  const isMobileHud = isMobile || gameH <= 560 || gameW <= 920;
+
+  return { physW, physH, gameW, gameH, isMobile, isForcedLandscape, isMobileHud };
+};
+
 export const App: React.FC = () => {
   const [overlay, setOverlay] = useState<OverlayState>('START_MENU');
   const [previousOverlay, setPreviousOverlay] = useState<OverlayState>('START_MENU');
@@ -114,6 +145,68 @@ export const App: React.FC = () => {
   const [hasSavedGame, setHasSavedGame] = useState<boolean>(false);
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [showTutorial, setShowTutorial] = useState<boolean>(false);
+  const [viewport, setViewport] = useState<ViewportInfo>(() => computeViewportInfo());
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  const lockLandscapeOrientation = useCallback(() => {
+    try {
+      const scr = window.screen as Screen & {
+        orientation?: { lock?: (mode: string) => Promise<void> };
+        lockOrientation?: (mode: string) => boolean;
+        mozLockOrientation?: (mode: string) => boolean;
+        msLockOrientation?: (mode: string) => boolean;
+      };
+      if (scr?.orientation && typeof scr.orientation.lock === 'function') {
+        scr.orientation.lock('landscape').catch(() => {});
+      } else if (typeof scr?.lockOrientation === 'function') {
+        scr.lockOrientation('landscape');
+      }
+    } catch {
+      // ignore on browsers that restrict orientation lock
+    }
+  }, []);
+
+  // Sync viewport dimensions & CSS custom properties for forced-landscape mobile mode
+  useEffect(() => {
+    const syncViewport = () => {
+      const info = computeViewportInfo();
+      setViewport(info);
+      const rootStyle = document.documentElement.style;
+      rootStyle.setProperty('--phys-vw', `${info.physW}px`);
+      rootStyle.setProperty('--phys-vh', `${info.physH}px`);
+      rootStyle.setProperty('--game-vw', `${info.gameW}px`);
+      rootStyle.setProperty('--game-vh', `${info.gameH}px`);
+    };
+
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+    window.addEventListener('orientationchange', syncViewport);
+    window.visualViewport?.addEventListener('resize', syncViewport);
+
+    return () => {
+      window.removeEventListener('resize', syncViewport);
+      window.removeEventListener('orientationchange', syncViewport);
+      window.visualViewport?.removeEventListener('resize', syncViewport);
+    };
+  }, []);
+
+  // Track Fullscreen API state changes
+  useEffect(() => {
+    const onFsChange = () => {
+      const doc = document as Document & { webkitFullscreenElement?: Element };
+      const active = Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+      setIsFullscreen(active);
+      if (active) {
+        lockLandscapeOrientation();
+      }
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('webkitfullscreenchange', onFsChange);
+    };
+  }, [lockLandscapeOrientation]);
 
   // Show the guided tutorial the first time a player enters the office
   const maybeStartTutorial = () => {
@@ -135,9 +228,8 @@ export const App: React.FC = () => {
     }
   };
 
-  // Load transparent logo, saved campaign progress, and saved settings on startup
+  // Load saved campaign progress and saved settings on startup
   useEffect(() => {
-
     try {
       const rawSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (rawSettings) {
@@ -172,9 +264,12 @@ export const App: React.FC = () => {
       // ignore storage errors
     }
 
-    // Unlock Web Audio and start warm campus ambiance on first user gesture
+    // Unlock Web Audio and attempt landscape lock on first user gesture
     const unlockAudio = () => {
       soundEngine.startAmbient();
+      if (computeViewportInfo().isMobile) {
+        lockLandscapeOrientation();
+      }
       window.removeEventListener('pointerdown', unlockAudio);
       window.removeEventListener('keydown', unlockAudio);
     };
@@ -184,7 +279,7 @@ export const App: React.FC = () => {
       window.removeEventListener('pointerdown', unlockAudio);
       window.removeEventListener('keydown', unlockAudio);
     };
-  }, []);
+  }, [lockLandscapeOrientation]);
 
   // Persist settings whenever changed
   const updateSettings = (patch: Partial<GameSettings>) => {
@@ -232,6 +327,7 @@ export const App: React.FC = () => {
     soundEngine.startAmbient();
     soundEngine.playFanfare();
     soundEngine.playDoorOpen();
+    if (viewport.isMobile) lockLandscapeOrientation();
     setCaseResults({});
     setActiveCaseIndex(0);
     setResetVersion((v) => v + 1);
@@ -244,6 +340,7 @@ export const App: React.FC = () => {
     soundEngine.startAmbient();
     soundEngine.playButtonClick();
     soundEngine.playDoorOpen();
+    if (viewport.isMobile) lockLandscapeOrientation();
     setOverlay('PLAYING');
     maybeStartTutorial();
   };
@@ -252,6 +349,7 @@ export const App: React.FC = () => {
     soundEngine.startAmbient();
     soundEngine.playButtonClick();
     soundEngine.playDoorOpen();
+    if (viewport.isMobile) lockLandscapeOrientation();
     setActiveCaseIndex(index);
     setResetVersion((v) => v + 1);
     saveProgress(index, caseResults);
@@ -306,10 +404,52 @@ export const App: React.FC = () => {
 
   const handleToggleFullscreen = () => {
     soundEngine.playButtonClick();
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen?.().catch(() => {});
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element;
+      webkitExitFullscreen?: () => Promise<void>;
+    };
+    const docEl = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void>;
+    };
+
+    const currentlyFull = Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+    if (!currentlyFull) {
+      if (typeof docEl.requestFullscreen === 'function') {
+        docEl
+          .requestFullscreen()
+          .then(() => {
+            setIsFullscreen(true);
+            lockLandscapeOrientation();
+          })
+          .catch(() => {
+            setIsFullscreen((prev) => !prev);
+            lockLandscapeOrientation();
+          });
+      } else if (typeof docEl.webkitRequestFullscreen === 'function') {
+        try {
+          docEl.webkitRequestFullscreen();
+          setIsFullscreen(true);
+          lockLandscapeOrientation();
+        } catch {
+          setIsFullscreen((prev) => !prev);
+        }
+      } else {
+        setIsFullscreen((prev) => !prev);
+        window.scrollTo(0, 1);
+        lockLandscapeOrientation();
+      }
     } else {
-      document.exitFullscreen?.().catch(() => {});
+      if (typeof doc.exitFullscreen === 'function') {
+        doc
+          .exitFullscreen()
+          .then(() => setIsFullscreen(false))
+          .catch(() => setIsFullscreen(false));
+      } else if (typeof doc.webkitExitFullscreen === 'function') {
+        doc.webkitExitFullscreen();
+        setIsFullscreen(false);
+      } else {
+        setIsFullscreen(false);
+      }
     }
   };
 
@@ -386,8 +526,12 @@ export const App: React.FC = () => {
   const completedCasesCount = Object.keys(caseResults).length;
 
   return (
-    <div className="fullscreen-game-root">
-      {/* TOP-LEFT PAUSE BUTTON */}
+    <div
+      className={`fullscreen-game-root ${viewport.isMobileHud ? 'is-mobile-hud' : ''} ${
+        viewport.isForcedLandscape ? 'is-forced-landscape' : ''
+      }`}
+    >
+      {/* TOP-LEFT PAUSE & FULLSCREEN BUTTONS */}
       {overlay === 'PLAYING' && (
         <header className="game-floating-topbar no-print">
           <button
@@ -397,9 +541,22 @@ export const App: React.FC = () => {
             className="btn-hud-pause"
             title="Pausa (Esc)"
           >
-            <Pause size={16} />
+            <Pause size={15} />
             <span>Pausa</span>
             <kbd>Esc</kbd>
+          </button>
+          <button
+            type="button"
+            onMouseEnter={() => soundEngine.playHoverTick()}
+            onClick={handleToggleFullscreen}
+            className={`btn-hud-fullscreen ${isFullscreen ? 'is-active' : ''}`}
+            title={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+            aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+          >
+            {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            <span className="fullscreen-btn-label">
+              {isFullscreen ? 'Salir' : 'Pantalla completa'}
+            </span>
           </button>
         </header>
       )}
@@ -410,12 +567,20 @@ export const App: React.FC = () => {
         resetVersion={resetVersion}
         settings={settings}
         isMenuOpen={overlay !== 'PLAYING'}
+        isMobileHud={viewport.isMobileHud}
+        isForcedLandscape={viewport.isForcedLandscape}
         onOpenManual={() => handleOpenModalFrom('GUIDE')}
         onPause={handlePause}
         onCompleteCase={handleCompleteCase}
       />
 
-      {overlay === 'PLAYING' && showTutorial && <TutorialOverlay onFinish={finishTutorial} />}
+      {overlay === 'PLAYING' && showTutorial && (
+        <TutorialOverlay
+          onFinish={finishTutorial}
+          isForcedLandscape={viewport.isForcedLandscape}
+          isMobileHud={viewport.isMobileHud}
+        />
+      )}
 
       {/* ========================================================================
           PAUSE MENU
@@ -523,7 +688,8 @@ export const App: React.FC = () => {
                   onClick={handleToggleFullscreen}
                   className="pause-btn"
                 >
-                  <Maximize2 size={17} /> Pantalla completa
+                  {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+                  {isFullscreen ? 'Salir pantalla completa' : 'Pantalla completa'}
                 </button>
               </div>
               <button
@@ -547,10 +713,26 @@ export const App: React.FC = () => {
           ======================================================================== */}
       {overlay === 'START_MENU' && (
         <div className="game-title-screen-overlay">
+          {/* FLOATING FULLSCREEN BUTTON ON TITLE SCREEN */}
+          <button
+            type="button"
+            onMouseEnter={() => soundEngine.playHoverTick()}
+            onClick={handleToggleFullscreen}
+            className={`btn-hud-fullscreen start-fullscreen-btn ${isFullscreen ? 'is-active' : ''}`}
+            title={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+            aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+          >
+            {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            <span>{isFullscreen ? 'Salir pantalla completa' : 'Pantalla completa'}</span>
+          </button>
+
           {/* LEFT DOCK: GAME LOGO CREST & INTERACTIVE MENU COLUMN */}
           <aside className="title-screen-left-dock">
             <div className="start-logo-hero">
-              <GameLogo size="lg" tagline="Selección por competencias" />
+              <GameLogo
+                size={viewport.isMobileHud ? 'sm' : 'lg'}
+                tagline="Selección por competencias"
+              />
             </div>
 
             <div className="start-badge">Pontificia Universidad Javeriana Cali</div>
@@ -629,15 +811,26 @@ export const App: React.FC = () => {
 
             <div className="title-dock-footer">
               <span>JaveTalento · v1.0</span>
-              <button
-                type="button"
-                onMouseEnter={() => soundEngine.playHoverTick()}
-                onClick={handleToggleAudio}
-                className="btn-hud-icon"
-                title={settings.isMuted ? 'Activar sonido' : 'Silenciar sonido'}
-              >
-                {settings.isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-              </button>
+              <div className="hud-top-actions">
+                <button
+                  type="button"
+                  onMouseEnter={() => soundEngine.playHoverTick()}
+                  onClick={handleToggleFullscreen}
+                  className="btn-hud-icon"
+                  title={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+                >
+                  {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+                <button
+                  type="button"
+                  onMouseEnter={() => soundEngine.playHoverTick()}
+                  onClick={handleToggleAudio}
+                  className="btn-hud-icon"
+                  title={settings.isMuted ? 'Activar sonido' : 'Silenciar sonido'}
+                >
+                  {settings.isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                </button>
+              </div>
             </div>
           </aside>
 
@@ -698,7 +891,7 @@ export const App: React.FC = () => {
                 onClick={handleCloseModal}
                 className="btn-putdown-object"
               >
-                <X size={16} /> Guardar y Volver [Esc]
+                <X size={16} /> Guardar y Volver <kbd>Esc</kbd>
               </button>
             </div>
 
@@ -829,7 +1022,8 @@ export const App: React.FC = () => {
                     onClick={handleToggleFullscreen}
                     className="btn-seg-option"
                   >
-                    <Maximize2 size={14} /> Pantalla Completa
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    {isFullscreen ? 'Salir Pantalla Completa' : 'Pantalla Completa'}
                   </button>
                   <button
                     type="button"
@@ -863,7 +1057,7 @@ export const App: React.FC = () => {
                 onClick={handleCloseModal}
                 className="btn-putdown-object"
               >
-                <X size={16} /> Cerrar Selector [Esc]
+                <X size={16} /> Cerrar <kbd>Esc</kbd>
               </button>
             </div>
 
